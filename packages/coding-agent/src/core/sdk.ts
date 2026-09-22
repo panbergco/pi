@@ -53,6 +53,8 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Re-resolve `scopedModels` from the `enabledModels` setting on reload. Default: false */
+	scopedModelsFromSettings?: boolean;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -418,6 +420,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		settingsManager,
 		cwd,
 		scopedModels: options.scopedModels,
+		scopedModelsFromSettings: options.scopedModelsFromSettings,
 		resourceLoader,
 		customTools: options.customTools,
 		modelRuntime,

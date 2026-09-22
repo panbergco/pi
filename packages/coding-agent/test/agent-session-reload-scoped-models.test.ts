@@ -64,6 +64,27 @@ describe("AgentSession reload re-resolves scoped models from settings", () => {
 	const scopedIds = (session: Awaited<ReturnType<typeof createSession>>) =>
 		session.scopedModels.map((scoped) => `${scoped.model.provider}/${scoped.model.id}`);
 
+	const extraProvider = {
+		baseUrl: "http://localhost:8080",
+		api: "anthropic-messages" as const,
+		apiKey: "test-key",
+		models: [
+			{
+				id: "extra-model",
+				name: "Extra",
+				reasoning: false,
+				input: ["text" as const],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 100_000,
+				maxTokens: 4_096,
+			},
+		],
+	};
+
+	async function waitFor(check: () => boolean) {
+		for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+
 	it("picks up an edited enabledModels setting", async () => {
 		writeEnabledModels(["anthropic/claude-sonnet-4-5"]);
 		const session = await createSession({ fromSettings: true });
@@ -93,23 +114,8 @@ describe("AgentSession reload re-resolves scoped models from settings", () => {
 			fromSettings: true,
 			extensionFactories: [
 				(pi) => {
-					pi.on("session_start", () => {
-						pi.registerProvider("extra", {
-							baseUrl: "http://localhost:8080",
-							api: "anthropic-messages",
-							apiKey: "test-key",
-							models: [
-								{
-									id: "extra-model",
-									name: "Extra",
-									reasoning: false,
-									input: ["text"],
-									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-									contextWindow: 100_000,
-									maxTokens: 4_096,
-								},
-							],
-						});
+					pi.on("session_start", (event) => {
+						if (event.reason === "reload") pi.registerProvider("extra", extraProvider);
 					});
 				},
 			],
@@ -117,9 +123,55 @@ describe("AgentSession reload re-resolves scoped models from settings", () => {
 		// Resolved before any session_start: the extension model does not exist yet.
 		expect(scopedIds(session)).toEqual(["anthropic/claude-sonnet-4-5"]);
 
-		await session.bindExtensions({});
+		await session.bindExtensions({ onError: () => {} });
 		await session.reload();
 
+		expect(scopedIds(session)).toEqual(["anthropic/claude-sonnet-4-5", "extra/extra-model"]);
+		session.dispose();
+	});
+
+	it("includes models an extension registers asynchronously after session_start", async () => {
+		writeEnabledModels(["anthropic/claude-sonnet-4-5", "extra/extra-model"]);
+		const session = await createSession({
+			fromSettings: true,
+			extensionFactories: [
+				(pi) => {
+					// Not awaited by the handler: registration lands after reload() returns.
+					pi.on("session_start", (event) => {
+						if (event.reason === "reload") setTimeout(() => pi.registerProvider("extra", extraProvider), 20);
+					});
+				},
+			],
+		});
+
+		await session.bindExtensions({ onError: () => {} });
+		await session.reload();
+		await waitFor(() => scopedIds(session).includes("extra/extra-model"));
+
+		expect(scopedIds(session)).toEqual(["anthropic/claude-sonnet-4-5", "extra/extra-model"]);
+		session.dispose();
+	});
+
+	it("keeps a session-only scope change until the next reload", async () => {
+		writeEnabledModels(["anthropic/claude-sonnet-4-5", "extra/extra-model"]);
+		let register: (() => void) | undefined;
+		const session = await createSession({
+			fromSettings: true,
+			extensionFactories: [
+				(pi) => {
+					register = () => pi.registerProvider("extra", extraProvider);
+				},
+			],
+		});
+		await session.bindExtensions({ onError: () => {} });
+		const opus = getModel("anthropic", "claude-opus-4-5")!;
+		session.setScopedModels([{ model: opus }]);
+
+		register?.();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(scopedIds(session)).toEqual(["anthropic/claude-opus-4-5"]);
+
+		await session.reload();
 		expect(scopedIds(session)).toEqual(["anthropic/claude-sonnet-4-5", "extra/extra-model"]);
 		session.dispose();
 	});

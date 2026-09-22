@@ -338,6 +338,9 @@ export class AgentSession {
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	private readonly _scopedModelsFromSettings: boolean;
+	/** Set when the scope is changed for this session only (e.g. /scoped-models without saving). */
+	private _scopedModelsOverridden = false;
+	private _scopedModelsResolveSeq = 0;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -1345,6 +1348,7 @@ export class AgentSession {
 	/** Update scoped models for cycling */
 	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
 		this._scopedModels = scopedModels;
+		this._scopedModelsOverridden = true;
 	}
 
 	/** File-based prompt templates */
@@ -3136,14 +3140,17 @@ export class AgentSession {
 				registerProvider: (name, config) => {
 					this._modelRuntime.registerProvider(name, config);
 					this._refreshCurrentModelFromRegistry();
+					void this._resolveScopedModelsFromSettings();
 				},
 				registerNativeProvider: (provider) => {
 					this._modelRuntime.registerNativeProvider(provider);
 					this._refreshCurrentModelFromRegistry();
+					void this._resolveScopedModelsFromSettings();
 				},
 				unregisterProvider: (name) => {
 					this._modelRuntime.unregisterProvider(name);
 					this._refreshCurrentModelFromRegistry();
+					void this._resolveScopedModelsFromSettings();
 				},
 			},
 		);
@@ -3321,28 +3328,33 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
-		// After session_start, so models registered by reloaded extensions can match.
-		await this._reloadScopedModelsFromSettings();
+		// Reload re-reads settings, so it also ends any session-only scope change.
+		// Providers registered later (e.g. asynchronously from session_start) re-resolve again.
+		this._scopedModelsOverridden = false;
+		await this._resolveScopedModelsFromSettings();
 	}
 
-	private async _reloadScopedModelsFromSettings(): Promise<void> {
-		if (!this._scopedModelsFromSettings) return;
+	private async _resolveScopedModelsFromSettings(): Promise<void> {
+		if (!this._scopedModelsFromSettings || this._scopedModelsOverridden) return;
+		const seq = ++this._scopedModelsResolveSeq;
 		const patterns = this.settingsManager.getEnabledModels();
-		if (!patterns?.length) {
-			this._scopedModels = [];
-			return;
+		let scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> = [];
+		if (patterns?.length) {
+			try {
+				const resolved = await resolveModelScopeWithDiagnostics(patterns, this._modelRuntime, {
+					signal: AbortSignal.timeout(15_000),
+				});
+				scopedModels = resolved.scopedModels.map((scoped) => ({
+					model: scoped.model,
+					thinkingLevel: scoped.thinkingLevel,
+				}));
+			} catch {
+				return; // Keep the previous scope if the catalogue cannot be read.
+			}
 		}
-		try {
-			const { scopedModels } = await resolveModelScopeWithDiagnostics(patterns, this._modelRuntime, {
-				signal: AbortSignal.timeout(15_000),
-			});
-			this._scopedModels = scopedModels.map((scoped) => ({
-				model: scoped.model,
-				thinkingLevel: scoped.thinkingLevel,
-			}));
-		} catch {
-			// Keep the previous scope if the catalogue cannot be read.
-		}
+		// A newer resolution or a session-only change made while this one awaited wins.
+		if (seq !== this._scopedModelsResolveSeq || this._scopedModelsOverridden) return;
+		this._scopedModels = scopedModels;
 	}
 
 	// =========================================================================

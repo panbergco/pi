@@ -106,6 +106,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { resolveModelScopeWithDiagnostics } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -224,6 +225,11 @@ export interface AgentSessionConfig {
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/**
+	 * Whether `scopedModels` was resolved from the `enabledModels` setting. When true,
+	 * `reload()` resolves the scope again from the reloaded settings and model catalogue.
+	 */
+	scopedModelsFromSettings?: boolean;
 	/** Resource loader for extensions, skills, prompts, themes, context files, and system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -331,6 +337,7 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private readonly _scopedModelsFromSettings: boolean;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -414,6 +421,7 @@ export class AgentSession {
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
+		this._scopedModelsFromSettings = config.scopedModelsFromSettings ?? false;
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
@@ -3312,6 +3320,28 @@ export class AgentSession {
 			await options?.beforeSessionStart?.();
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
+		}
+		// After session_start, so models registered by reloaded extensions can match.
+		await this._reloadScopedModelsFromSettings();
+	}
+
+	private async _reloadScopedModelsFromSettings(): Promise<void> {
+		if (!this._scopedModelsFromSettings) return;
+		const patterns = this.settingsManager.getEnabledModels();
+		if (!patterns?.length) {
+			this._scopedModels = [];
+			return;
+		}
+		try {
+			const { scopedModels } = await resolveModelScopeWithDiagnostics(patterns, this._modelRuntime, {
+				signal: AbortSignal.timeout(15_000),
+			});
+			this._scopedModels = scopedModels.map((scoped) => ({
+				model: scoped.model,
+				thinkingLevel: scoped.thinkingLevel,
+			}));
+		} catch {
+			// Keep the previous scope if the catalogue cannot be read.
 		}
 	}
 

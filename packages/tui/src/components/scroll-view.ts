@@ -1,5 +1,11 @@
 import { LAYOUT_NODE, type ScrollLayoutNode } from "../layout-node.ts";
-import { type Component, Container } from "../tui.ts";
+import {
+	type Component,
+	Container,
+	dispatchMouseEvent,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+} from "../tui.ts";
 
 export type ScrollViewScrollbar = "hidden" | "auto" | "always";
 
@@ -216,6 +222,24 @@ export class ScrollView extends Container {
 		const contentWidth = this.getContentWidth(width);
 		const lines = this.child.render(contentWidth);
 		return contentWidth === width ? lines : lines.map((line) => `${line} `);
+	}
+
+	/**
+	 * Forward mouse events into the scrolled content, in content coordinates. Returning undefined
+	 * when the content does not handle the event leaves wheel routing (and scroll chaining) intact,
+	 * so a component that scrolls internally can take the wheel while it has room and hand it back
+	 * at its edges.
+	 */
+	override handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		if (event.y < 0 || (this.currentViewportHeight > 0 && event.y >= this.currentViewportHeight)) return undefined;
+		const contentWidth = this.getContentWidth(event.width);
+		if (event.x >= contentWidth) return undefined;
+		return dispatchMouseEvent(this.child, {
+			...event,
+			y: this.currentScrollTop + event.y,
+			width: contentWidth,
+			height: Math.max(this.contentHeight, this.currentViewportHeight),
+		});
 	}
 
 	[LAYOUT_NODE](): ScrollLayoutNode {

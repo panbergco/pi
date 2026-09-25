@@ -346,7 +346,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				currentModel.provider === requestModel.provider &&
 				currentModel.id === requestModel.id &&
 				messages.length <= currentMessages.length &&
-				messages.every((message, index) => currentMessages[index] === message)
+				// Appending a message while idle rebuilds every message object from the session
+				// file, so identity alone reads an unchanged prefix as changed and drops the refresh.
+				messages.every(
+					(message, index) =>
+						currentMessages[index] === message ||
+						JSON.stringify(currentMessages[index]) === JSON.stringify(message),
+				)
 			);
 		};
 	};

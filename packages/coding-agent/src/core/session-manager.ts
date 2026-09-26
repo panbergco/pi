@@ -162,6 +162,8 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 	content: string | (TextContent | ImageContent)[];
 	details?: T;
 	display: boolean;
+	/** Path of the extension that added it, when an extension did. */
+	source?: string;
 }
 
 /** Content that an append-only context edit may replace without changing message metadata. */
@@ -1339,6 +1341,7 @@ export class SessionManager {
 		content: string | (TextContent | ImageContent)[],
 		display: boolean,
 		details?: T,
+		source?: string,
 	): string {
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
@@ -1346,6 +1349,7 @@ export class SessionManager {
 			content,
 			display,
 			details,
+			...(source === undefined ? {} : { source }),
 			id: generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),

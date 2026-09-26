@@ -35,6 +35,8 @@ export interface CustomMessage<T = unknown> {
 	display: boolean;
 	details?: T;
 	timestamp: number;
+	/** Path of the extension that sent it, when an extension did. */
+	source?: string;
 }
 
 export interface BranchSummaryMessage {

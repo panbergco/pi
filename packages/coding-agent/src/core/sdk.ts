@@ -398,7 +398,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transformContext: async (messages) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner) return messages;
-			return runner.emitContext(messages);
+			// One record per request in which a context handler changed the conversation: which
+			// extension, and which message indexes, so a rewritten prefix names its author.
+			return runner.emitContext(messages, (changes) =>
+				sessionManager.appendCustomEntry("context_changes", { changes }),
+			);
 		},
 		steeringMode: settingsManager.getSteeringMode(),
 		followUpMode: settingsManager.getFollowUpMode(),

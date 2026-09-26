@@ -1187,17 +1187,38 @@ export class ExtensionRunner {
 	 * only and Pi restores the prompt and tool state after each; `context_with_system`
 	 * handlers then see the full transcript and their output is used as returned.
 	 */
-	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
+	/**
+	 * Run the context handlers. When `report` is given, it receives, for this request, each
+	 * extension whose handler changed the conversation and the indexes of the messages it changed
+	 * — compared by content, so an edit made in place is seen too. Called only when one did.
+	 */
+	async emitContext(
+		messages: AgentMessage[],
+		report?: (changes: Array<{ extension: string; changed: number[] }>) => void,
+	): Promise<AgentMessage[]> {
 		const ctx = this.createContext();
 		let currentMessages = structuredClone(messages);
+		const changes: Array<{ extension: string; changed: number[] }> = [];
+		// SHORTCUT: each handler's input is serialised once to see what it changed — a full copy of the
+		// conversation per handler per request, paid only when `report` is given; hash per message if it shows.
+		const note = (extension: string, before: string[] | undefined, after: AgentMessage[]): void => {
+			if (!before) return;
+			const changed: number[] = [];
+			for (let i = 0; i < Math.max(before.length, after.length); i++) {
+				if (i >= before.length || i >= after.length || before[i] !== JSON.stringify(after[i])) changed.push(i);
+			}
+			if (changed.length > 0) changes.push({ extension, changed });
+		};
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
 			for (const handler of handlers) {
 				try {
 					const visibleMessages = currentMessages.filter((message) => message.role !== "system");
 					const visibleSnapshot = visibleMessages.slice();
+					const before = report ? visibleMessages.map((m) => JSON.stringify(m)) : undefined;
 					const event: ContextEvent = { type: "context", messages: visibleMessages };
 					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
+					note(ext.path, before, handlerResult?.messages ?? visibleMessages);
 
 					// Handlers may return a new list or edit event.messages in place.
 					const returned =
@@ -1222,9 +1243,11 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
+					const before = report ? currentMessages.map((m) => JSON.stringify(m)) : undefined;
 					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
 					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
 					currentMessages = handlerResult?.messages ?? currentMessages;
+					note(ext.path, before, currentMessages);
 					// Providers read the prompt and initial tools from the leading system message.
 					// Losing it is never intended; report it but honor the handler's output.
 					if (hadLeadingSystemMessage && currentMessages[0]?.role !== "system") {
@@ -1247,6 +1270,7 @@ export class ExtensionRunner {
 			}
 		}
 
+		if (report && changes.length > 0) report(changes);
 		return currentMessages;
 	}
 

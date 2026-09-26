@@ -350,7 +350,8 @@ function createExtensionAPI(
 		// Action methods - delegate to shared runtime
 		sendMessage(message, options): void {
 			assertActive();
-			runtime.sendMessage(message, options);
+			// The session record names the extension that added each message it sends.
+			runtime.sendMessage({ ...message, source: extension.path }, options);
 		},
 
 		sendUserMessage(content, options): void {

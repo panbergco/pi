@@ -2,6 +2,7 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
+import { createHash } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	getCurrentSystemMessage,
@@ -264,6 +265,18 @@ export async function emitSessionShutdownEvent(
 
 function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
+}
+
+/** One extension's effect on one request's conversation, by message content hash. */
+export interface ContextChange {
+	extension: string;
+	removed: string[];
+	added: string[];
+	changed: string[];
+}
+
+function messageHash(message: AgentMessage): string {
+	return createHash("sha256").update(JSON.stringify(message)).digest("hex").slice(0, 12);
 }
 
 function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {
@@ -1189,25 +1202,35 @@ export class ExtensionRunner {
 	 */
 	/**
 	 * Run the context handlers. When `report` is given, it receives, for this request, each
-	 * extension whose handler changed the conversation and the indexes of the messages it changed
-	 * — compared by content, so an edit made in place is seen too. Called only when one did.
+	 * extension whose handler changed the conversation: the messages it removed and added (by a
+	 * short hash of their content) and the ones it edited in place (by their hash before the edit).
+	 * Messages are matched by identity and content, never by position, so a stable filter reads as
+	 * the same removal every request. Called only when some handler changed something.
 	 */
-	async emitContext(
-		messages: AgentMessage[],
-		report?: (changes: Array<{ extension: string; changed: number[] }>) => void,
-	): Promise<AgentMessage[]> {
+	async emitContext(messages: AgentMessage[], report?: (changes: ContextChange[]) => void): Promise<AgentMessage[]> {
 		const ctx = this.createContext();
 		let currentMessages = structuredClone(messages);
-		const changes: Array<{ extension: string; changed: number[] }> = [];
-		// SHORTCUT: each handler's input is serialised once to see what it changed — a full copy of the
-		// conversation per handler per request, paid only when `report` is given; hash per message if it shows.
-		const note = (extension: string, before: string[] | undefined, after: AgentMessage[]): void => {
+		const changes: ContextChange[] = [];
+		// SHORTCUT: each handler's input is serialised and hashed once to see what it changed — a full
+		// pass over the conversation per handler per request, paid only when `report` is given.
+		const snap = (list: AgentMessage[]) => (report ? list.map((m) => ({ m, h: messageHash(m) })) : undefined);
+		const note = (
+			extension: string,
+			before: Array<{ m: AgentMessage; h: string }> | undefined,
+			after: AgentMessage[],
+		) => {
 			if (!before) return;
-			const changed: number[] = [];
-			for (let i = 0; i < Math.max(before.length, after.length); i++) {
-				if (i >= before.length || i >= after.length || before[i] !== JSON.stringify(after[i])) changed.push(i);
-			}
-			if (changed.length > 0) changes.push({ extension, changed });
+			const kept = new Set(after);
+			const afterHashes = new Map<AgentMessage, string>(after.map((m) => [m, messageHash(m)]));
+			const beforeHashes = new Set(before.map((b) => b.h));
+			const stillThere = new Set(afterHashes.values());
+			const removed = before.filter((b) => !kept.has(b.m) && !stillThere.has(b.h)).map((b) => b.h);
+			const changed = before.filter((b) => kept.has(b.m) && afterHashes.get(b.m) !== b.h).map((b) => b.h);
+			const known = new Set(before.map((b) => b.m));
+			const added = after
+				.filter((m) => !known.has(m) && !beforeHashes.has(afterHashes.get(m)!))
+				.map((m) => afterHashes.get(m)!);
+			if (removed.length + added.length + changed.length > 0) changes.push({ extension, removed, added, changed });
 		};
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "context")) {
@@ -1215,7 +1238,7 @@ export class ExtensionRunner {
 				try {
 					const visibleMessages = currentMessages.filter((message) => message.role !== "system");
 					const visibleSnapshot = visibleMessages.slice();
-					const before = report ? visibleMessages.map((m) => JSON.stringify(m)) : undefined;
+					const before = snap(visibleMessages);
 					const event: ContextEvent = { type: "context", messages: visibleMessages };
 					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
 					note(ext.path, before, handlerResult?.messages ?? visibleMessages);
@@ -1243,7 +1266,7 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
-					const before = report ? currentMessages.map((m) => JSON.stringify(m)) : undefined;
+					const before = snap(currentMessages);
 					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
 					const handlerResult = (await handler(event, ctx)) as ContextEventResult | undefined;
 					currentMessages = handlerResult?.messages ?? currentMessages;

@@ -107,26 +107,62 @@ describe("the session record names who added and who changed a message", () => {
 		expect(a.source).not.toBe(b.source);
 	});
 
-	it("a context handler that changes a message is recorded once per request with its path and the changed indexes; one that changes nothing is not", async () => {
+	const records = (entries: () => Array<Record<string, any>>) =>
+		entries().filter((e) => e.type === "custom" && e.customType === "context_changes");
+	type Change = { extension: string; removed: string[]; added: string[]; changed: string[] };
+
+	it("a handler that filters one message out is recorded as that one removal, never as every later message changed", async () => {
 		const { runtimeHost, entries } = await host([
-			(pi) =>
+			(pi) => {
+				pi.on("context", (event) => ({
+					messages: event.messages.filter((m) => !(m.role === "custom" && m.customType === "hidden")),
+				}));
+			},
+			(pi) => {
+				pi.on("session_start", () => pi.sendMessage({ customType: "hidden", content: "drop me", display: false }));
+			},
+		]);
+		await runtimeHost.session.prompt("hello");
+		await runtimeHost.session.prompt("again");
+		const got = records(entries);
+		expect(got.length).toBe(2);
+		const first = got[0]!.data.changes as Change[];
+		const second = got[1]!.data.changes as Change[];
+		expect(first.length).toBe(1);
+		expect(first[0]!.removed.length).toBe(1);
+		expect(first[0]!.added).toEqual([]);
+		expect(first[0]!.changed).toEqual([]);
+		expect(second[0]!.removed).toEqual(first[0]!.removed);
+	});
+
+	it("a handler that rewrites a message is recorded as its old content removed and its new content added; an in-place edit as changed", async () => {
+		const { runtimeHost, entries } = await host([
+			(pi) => {
 				pi.on("context", (event) => {
 					const first = event.messages[0];
 					if (first && first.role === "user")
 						return { messages: [{ ...first, content: "rewritten" }, ...event.messages.slice(1)] };
 					return undefined;
-				}),
+				});
+			},
 			(pi) => {
-				pi.on("context", () => undefined);
+				pi.on("context", (event) => {
+					const first = event.messages[0];
+					if (first && first.role === "user") (first as { content: unknown }).content = "edited in place";
+					return undefined;
+				});
 			},
 		]);
 		await runtimeHost.session.prompt("hello");
-		const records = entries().filter((e) => e.type === "custom" && e.customType === "context_changes");
-		expect(records.length).toBe(1);
-		const changes = records[0].data.changes as Array<{ extension: string; changed: number[] }>;
-		expect(changes.length).toBe(1);
-		expect(typeof changes[0]!.extension).toBe("string");
-		expect(changes[0]!.changed).toEqual([0]);
+		const got = records(entries);
+		expect(got.length).toBe(1);
+		const [rewrite, edit] = got[0]!.data.changes as Change[];
+		expect(rewrite!.removed.length).toBe(1);
+		expect(rewrite!.added.length).toBe(1);
+		expect(rewrite!.changed).toEqual([]);
+		expect(edit!.changed.length).toBe(1);
+		expect(edit!.removed).toEqual([]);
+		expect(edit!.added).toEqual([]);
 	});
 
 	it("a request no context handler changed adds no record", async () => {
@@ -136,6 +172,6 @@ describe("the session record names who added and who changed a message", () => {
 			},
 		]);
 		await runtimeHost.session.prompt("hello");
-		expect(entries().filter((e) => e.type === "custom" && e.customType === "context_changes").length).toBe(0);
+		expect(records(entries).length).toBe(0);
 	});
 });

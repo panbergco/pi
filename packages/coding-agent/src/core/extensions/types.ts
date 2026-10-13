@@ -301,6 +301,8 @@ export interface ContextUsage {
 
 export interface CompactOptions {
 	customInstructions?: string;
+	/** Overrides `compaction.keepRecentTokens` for this call only. `0` keeps only the newest entry, so a short session still compacts. */
+	keepRecentTokens?: number;
 	onComplete?: (result: CompactionResult) => void;
 	onError?: (error: Error) => void;
 }

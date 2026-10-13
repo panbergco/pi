@@ -235,6 +235,76 @@ describe("AgentSession compaction characterization", () => {
 		);
 	});
 
+	it("extension compact with keepRecentTokens 0 compacts a session smaller than the configured keep budget", async () => {
+		const beforeCompactCalls: number[] = [];
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 80_000 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						beforeCompactCalls.push(event.preparation.settings.keepRecentTokens);
+						return {
+							compaction: {
+								summary: "reset",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+					pi.registerCommand("reset", {
+						description: "compact via ctx.compact",
+						handler: async (args, ctx) => {
+							const keepRecentTokens = args === "zero" ? 0 : undefined;
+							await new Promise<void>((resolve) => {
+								ctx.compact({
+									keepRecentTokens,
+									onComplete: () => {
+										outcomes.push("compacted");
+										resolve();
+									},
+									onError: (error) => {
+										outcomes.push(error.message);
+										resolve();
+									},
+								});
+							});
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const outcomes: string[] = [];
+		// ~30K tokens (estimateTokens is chars/4), well under the 80K keep budget.
+		const bulk = "x".repeat(20_000);
+		const now = Date.now();
+		for (let i = 0; i < 3; i++) {
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: bulk }],
+				timestamp: now - 1000 + i * 10,
+			});
+			const assistant = createAssistant(harness, { stopReason: "stop", timestamp: now - 995 + i * 10 });
+			assistant.content = [{ type: "text", text: bulk }];
+			harness.sessionManager.appendMessage(assistant);
+		}
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const tokens = harness.session.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+		expect(tokens).toBeGreaterThan(25_000);
+		expect(tokens).toBeLessThan(80_000);
+
+		// Without the option: today's behaviour, refused before the extension handler runs.
+		await harness.session.prompt("/reset");
+		expect(outcomes).toEqual(["Nothing to compact (session too small)"]);
+		expect(beforeCompactCalls).toEqual([]);
+
+		await harness.session.prompt("/reset zero");
+		expect(outcomes).toEqual(["Nothing to compact (session too small)", "compacted"]);
+		expect(beforeCompactCalls).toEqual([0]);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(harness.settingsManager.getCompactionSettings(harness.getModel()).keepRecentTokens).toBe(80_000);
+	});
+
 	it("allows a queued prompt to start when manual compaction ends", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { keepRecentTokens: 1 } },

@@ -2417,8 +2417,9 @@ export class AgentSession {
 	 * continues the interrupted agent turn.
 	 *
 	 * @param customInstructions Optional instructions for the compaction summary
+	 * @param keepRecentTokens Overrides `compaction.keepRecentTokens` for this call only (extensions)
 	 */
-	async compact(customInstructions?: string): Promise<CompactionResult> {
+	async compact(customInstructions?: string, keepRecentTokens?: number): Promise<CompactionResult> {
 		await this.abort();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
@@ -2431,7 +2432,8 @@ export class AgentSession {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const settings = this.settingsManager.getCompactionSettings(model);
+			const configured = this.settingsManager.getCompactionSettings(model);
+			const settings = keepRecentTokens === undefined ? configured : { ...configured, keepRecentTokens };
 			const {
 				model: requestModel,
 				apiKey,
@@ -3128,7 +3130,7 @@ export class AgentSession {
 				compact: (options) => {
 					void (async () => {
 						try {
-							const result = await this.compact(options?.customInstructions);
+							const result = await this.compact(options?.customInstructions, options?.keepRecentTokens);
 							options?.onComplete?.(result);
 						} catch (error) {
 							const err = error instanceof Error ? error : new Error(String(error));

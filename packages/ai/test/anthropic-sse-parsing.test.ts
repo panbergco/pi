@@ -228,7 +228,7 @@ describe("Anthropic raw SSE parsing", () => {
 		} as unknown as Anthropic;
 
 		await streamAnthropic(
-			getModel("anthropic", "claude-fable-5-1"),
+			getModel("anthropic", "claude-fable-5-2"),
 			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{
 				client,
@@ -275,7 +275,7 @@ describe("Anthropic raw SSE parsing", () => {
 		} as unknown as Anthropic;
 
 		const result = await streamAnthropic(
-			getModel("anthropic", "claude-fable-5-1"),
+			getModel("anthropic", "claude-fable-5-2"),
 			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client },
 		).result();
@@ -305,7 +305,7 @@ describe("Anthropic raw SSE parsing", () => {
 		events[4].data = JSON.stringify(delta);
 
 		const result = await streamAnthropic(
-			getModel("anthropic", "claude-fable-5-1"),
+			getModel("anthropic", "claude-fable-5-2"),
 			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client: createFakeAnthropicClient(createSseResponse(events)) },
 		).result();
@@ -512,7 +512,7 @@ describe("Anthropic raw SSE parsing", () => {
 	});
 
 	it("preserves refusal stop details from message_delta", async () => {
-		const model = getModel("anthropic", "claude-fable-5");
+		const model = getModel("anthropic", "claude-fable-5-2");
 		const context = normalizeContext({
 			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
 		});

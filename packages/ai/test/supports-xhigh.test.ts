@@ -54,7 +54,7 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it("includes xhigh and max but not off for Anthropic Claude Fable 5 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-fable-5");
+		const model = getModel("anthropic", "claude-fable-5-2");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).toContain("max");

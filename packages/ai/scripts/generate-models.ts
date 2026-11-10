@@ -279,8 +279,13 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
+	"claude-fable-5-2": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5": ["claude-opus-4-8"],
 } satisfies Record<string, string[]>;
+
+// Operator choice (panbergco fork): offer only the newest Fable on the direct Anthropic provider.
+// Accounts registered by pi-rotate copy this provider's list, so they follow it.
+const ANTHROPIC_SUPERSEDED_MODEL_IDS = new Set(["claude-fable-5", "claude-fable-5-1"]);
 
 const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	minimal: null,
@@ -599,14 +604,14 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
 		/^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$/.test(id) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+		/^claude-(?:fable|mythos)-5[.-][12](?:-\d{8})?$/.test(id)
 	);
 }
 
 function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
+		/^claude-(?:fable|mythos)-5(?:[.-][12])?(?:-\d{8})?$/.test(modelId)
 	);
 }
 
@@ -2677,8 +2682,26 @@ async function generateModels() {
 	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...radiusModels].filter(
 		(model) =>
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
-			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
+			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark") &&
+			!(model.provider === "anthropic" && ANTHROPIC_SUPERSEDED_MODEL_IDS.has(model.id)),
 	);
+
+	// Add Claude Fable 5.2 until models.dev includes it (upstream 0d1793c2b).
+	// https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2
+	if (!allModels.some((model) => model.provider === "anthropic" && model.id === "claude-fable-5-2")) {
+		allModels.push({
+			id: "claude-fable-5-2",
+			name: "Claude Fable 5.2",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
 
 	// Add Claude Opus 5.5 until models.dev includes it.
 	// https://platform.claude.com/docs/en/models/opus-5-5/overview

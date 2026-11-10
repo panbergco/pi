@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { stream } from "../src/api/anthropic-messages.ts";
-import { getModel, normalizeContext } from "../src/compat.ts";
+import { getModel, getModels, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 interface WireMessage {
@@ -194,7 +194,7 @@ describe("Anthropic mid-conversation effort", () => {
 	});
 
 	it("generates exact model and transport gates", () => {
-		const direct = getModel("anthropic", "claude-fable-5-1");
+		const direct = getModel("anthropic", "claude-fable-5-2");
 		const openRouter = getModel("openrouter", "anthropic/claude-fable-5.1");
 		const unsupported = getModel("anthropic", "claude-opus-4-8");
 		expect(direct.compat?.supportsMidConvoEffort).toBe(true);
@@ -206,5 +206,19 @@ describe("Anthropic mid-conversation effort", () => {
 		// OpenRouter rejects configuration_update on Opus 5 but accepts it on Fable 5.1.
 		expect(getModel("openrouter", "anthropic/claude-opus-5").compat?.supportsMidConvoEffort).toBeUndefined();
 		expect(getModel("anthropic", "claude-opus-5").compat?.allowedFallbackModels).toBeUndefined();
+	});
+
+	it("gates Fable 5.2 like Fable 5.1 and keeps only fallbacks that accept per-message effort", () => {
+		const direct = getModel("anthropic", "claude-fable-5-2");
+		expect(direct.compat?.supportsMidConvoEffort).toBe(true);
+		expect(direct.compat?.supportsMidConvoSystemMessages).toBe(true);
+		expect(direct.thinkingLevelMap).toMatchObject({ off: null, xhigh: "xhigh", max: "max" });
+		// Opus 4.8 cannot take per-message effort, so it is dropped from Fable 5.2's fallbacks.
+		expect(direct.compat?.allowedFallbackModels?.map((fallback) => fallback.model)).toEqual(["claude-opus-5"]);
+	});
+
+	it("offers only the newest Fable on the direct Anthropic provider", () => {
+		const fables = getModels("anthropic").filter((model) => model.id.includes("fable"));
+		expect(fables.map((model) => model.id)).toEqual(["claude-fable-5-2"]);
 	});
 });

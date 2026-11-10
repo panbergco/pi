@@ -82,11 +82,17 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 		expect(payload.output_config).toEqual({ effort: "medium" });
 	});
 
-	it("uses adaptive thinking with native xhigh effort for Claude Fable 5", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), { reasoning: "xhigh" });
+	it("uses adaptive thinking with native xhigh effort for Claude Fable 5.2", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-fable-5-2"), { reasoning: "xhigh" });
 
-		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
-		expect(payload.output_config).toEqual({ effort: "xhigh" });
+		expect(payload.thinking).toEqual({
+			type: "adaptive",
+			display: "summarized",
+			block_binding: { prefix_mismatch_behavior: "drop_block" },
+		});
+		// Managed-effort models pin the request default and carry the chosen effort per message.
+		expect(payload.output_config).toEqual({ effort: "high" });
+		expect(JSON.stringify(payload.messages)).toContain('"xhigh"');
 	});
 
 	it.each([

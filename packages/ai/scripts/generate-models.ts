@@ -283,8 +283,8 @@ const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
 	"claude-opus-5": ["claude-opus-4-8"],
 } satisfies Record<string, string[]>;
 
-// Operator choice (panbergco fork): offer only the newest Fable on the direct Anthropic provider.
-// Accounts registered by pi-rotate copy this provider's list, so they follow it.
+// Fork choice: offer only the newest Fable on the direct Anthropic provider.
+// Extensions that clone this provider's list for extra accounts follow it.
 const ANTHROPIC_SUPERSEDED_MODEL_IDS = new Set(["claude-fable-5", "claude-fable-5-1"]);
 
 const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
